@@ -1,6 +1,6 @@
-# Android Screen Relay (WebSocket Control & Stream)
+# android-control-core (Layer 1: Core System / Infrastructure)
 
-โปรเจคระบบส่งภาพหน้าจอและควบคุมเครื่อง Android ระยะไกลผ่าน WebSocket โดยเน้นการทำงานแบบ Background Service และ Overlay Process รองรับการเชื่อมต่อกับ Web Browser เพื่อรับ-ส่งข้อมูล JSON และคำสั่งควบคุมต่างๆ เหมาะสำหรับการนำไปประยุกต์ใช้กับตู้ Kiosk, ระบบ IoT Controller หรือการทำ Remote Support
+Android system-level control core with persistent background service, overlay process, WebSocket command bus, and structured logging.
 
 ## 🌟 ฟีเจอร์หลัก (Features)
 
@@ -31,7 +31,7 @@
     *   Deploy Project ลงเครื่อง Android (รองรับ Android 7.0+)
 2.  **ตั้งค่าสิทธิ์ (Permissions Setup):** ⚠️ *สำคัญมาก* ต้องเปิดสิทธิ์เหล่านี้:
     *   **Display over other apps:** อนุญาตให้แอพแสดงทับแอพอื่นได้ (สำหรับ Overlay)
-    *   **Accessibility Service:** เปิดใช้งาน "Android Screen Relay" ใน Settings > Accessibility
+    *   **Accessibility Service:** เปิดใช้งาน "android-control-core" ใน Settings > Accessibility
     *   **Notification:** อนุญาตให้แจ้งเตือน (สำหรับการทดสอบคำสั่ง Notification)
 3.  **เริ่มใช้งาน:**
     *   เปิดแอพ กดปุ่ม **"Start Service"**
@@ -73,7 +73,7 @@ graph LR
         
         SystemBoot("⚡ System Boot")
         
-        subgraph App_System ["⚙️ Application Core"]
+        subgraph App_System ["⚙️ android-control-core"]
             Boot["BootReceiver<br/>(Auto-Start)"]
             WS["WebSocket Server<br/>(Port 8887)"]
             Service["Foreground Service<br/>(RelayService)"]
