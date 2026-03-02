@@ -1,4 +1,4 @@
-# android-control-core (Layer 1: Core System / Infrastructure)
+# android-control-ocr
 
 Android system-level control core with persistent background service, overlay process, WebSocket command bus, and structured logging.
 
