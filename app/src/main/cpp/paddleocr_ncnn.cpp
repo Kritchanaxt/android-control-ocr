@@ -28,7 +28,7 @@
 #include "common.h"
 static ncnn::UnlockedPoolAllocator g_blob_pool_allocator;
 static ncnn::PoolAllocator g_workspace_pool_allocator;
-const int dstHeight = 32;//when use PP-OCRv3 it should be 48
+const int dstHeight = 48;//when use PP-OCRv3/v4 it should be 48
 ncnn::Net dbNet;
 ncnn::Net crnnNet;
 
@@ -196,8 +196,8 @@ TextLine getTextLine(const cv::Mat & src)
 
     cv::Mat srcResize;
     cv::resize(src, srcResize, cv::Size(dstWidth, dstHeight));
-    //if you use PP-OCRv3 you should change PIXEL_RGB to PIXEL_RGB2BGR
-    ncnn::Mat input = ncnn::Mat::from_pixels(srcResize.data, ncnn::Mat::PIXEL_RGB,srcResize.cols, srcResize.rows);
+    //if you use PP-OCRv3/v4 you should change PIXEL_RGB to PIXEL_RGB2BGR
+    ncnn::Mat input = ncnn::Mat::from_pixels(srcResize.data, ncnn::Mat::PIXEL_RGB2BGR,srcResize.cols, srcResize.rows);
     const float mean_vals[3] = { 127.5, 127.5, 127.5 };
     const float norm_vals[3] = { 1.0 / 127.5, 1.0 / 127.5, 1.0 / 127.5 };
     input.substract_mean_normalize(mean_vals, norm_vals);
@@ -278,14 +278,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR
 
     // init param
     {
-        int ret = dbNet.load_param(mgr, "pdocrv2.0_det-op.param");
+        int ret = dbNet.load_param(mgr, "pdocrv4_det.param");
         if (ret != 0)
         {
             __android_log_print(ANDROID_LOG_WARN, "PaddleocrNcnn", "load_dbNet_param failed");
             return JNI_FALSE;
         }
         
-        ret = crnnNet.load_param(mgr, "pdocrv2.0_rec-op.param");
+        ret = crnnNet.load_param(mgr, "pdocrv4_rec.param");
         
         if (ret != 0)
         {
@@ -296,14 +296,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR
 
     // init bin
     {
-        int ret = dbNet.load_model(mgr, "pdocrv2.0_det-op.bin");
+        int ret = dbNet.load_model(mgr, "pdocrv4_det.bin");
         if (ret != 0)
         {
             __android_log_print(ANDROID_LOG_WARN, "PaddleocrNcnn", "load_dbNet_model failed");
             return JNI_FALSE;
         }
         
-        ret = crnnNet.load_model(mgr, "pdocrv2.0_rec-op.bin");
+        ret = crnnNet.load_model(mgr, "pdocrv4_rec.bin");
         
         if (ret != 0)
         {
@@ -346,6 +346,26 @@ JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR
     probId = env->GetFieldID(objCls, "prob", "F");
 
     return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR_hasOpenCL(JNIEnv* env, jobject thiz)
+{
+#if NCNN_VULKAN
+    return ncnn::get_gpu_count() > 0 ? JNI_TRUE : JNI_FALSE;
+#else
+    return JNI_FALSE;
+#endif
+}
+
+JNIEXPORT jint JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR_getCpuThreadNum(JNIEnv* env, jobject thiz)
+{
+    return 4;
+}
+
+JNIEXPORT jstring JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR_getCpuPowerMode(JNIEnv* env, jobject thiz)
+{
+    // dbNet.opt.lightmode = true;
+    return env->NewStringUTF("LITE_POWER_HIGH");
 }
 
 // public native Obj[] detectNative(Bitmap bitmap, boolean use_gpu);
