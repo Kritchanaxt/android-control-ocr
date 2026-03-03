@@ -1,13 +1,20 @@
 
 # android-control-ocr
 
-**(Layer 1: Core System / Infrastructure)**
+**(Layer 1: Core System / Infrastructure + Layer 2: AI & OCR Capabilities)**
 
-Android system-level control core featuring a persistent background service, overlay process, WebSocket command bus, and structured logging.
+Android system-level control core featuring a persistent background service, **AI-powered OCR scanner**, overlay process, WebSocket command bus, and structured logging.
 
 ---
 
 ## 🌟 Key Features
+
+### **🆕 AI & OCR Scanning (New)**
+
+* **Advanced OCR Engine**: Powered by **NCNN** framework running **PP-OCRv4** (Mobile/Slim), enabling offline, ultra-fast, and accurate text recognition directly on Android devices.
+* **Camera2 API Control**: Advanced camera management with custom resolution scaling, auto-focus, and flash control.
+* **Real-Time Preview**: Low-latency camera preview implemented with **Jetpack Compose + TextureView**.
+* **JSON Output**: OCR results are instantly formatted as JSON for easy parsing and integration with the web client.
 
 ### **WebSocket Communication (JSON-First)**
 
@@ -36,6 +43,15 @@ Android system-level control core featuring a persistent background service, ove
 
 * **Passkey Authentication**: Requires a valid passkey before accepting any remote command.
 
+### **Performance & Resource Monitoring**
+
+* **Inference Latency**: Tracks the time taken for each OCR detection in milliseconds (ms) to optimize model performance.
+* **System Metrics**:
+    * **CPU**: Tracks thermal status and load (where available).
+    * **RAM Usage**: Real-time memory usage (Used/Total MB).
+    * **Battery**: Current level (%) and temperature monitoring.
+* **Device Spec**: Automatically logs device model, Android version, and API level for debugging compatibility issues.
+
 ### **Internal Log System**
 
 * Centralized logging via `LogRepository` for debugging, auditing, and reliability analysis.
@@ -47,120 +63,105 @@ Android system-level control core featuring a persistent background service, ove
 ### Android App Side
 
 1. **Install the Application**
-
    * Deploy the project to an Android device (Android 7.0+ supported).
 
 2. **Permissions Setup** ⚠️ *Critical*
+   * **Camera**: Required for OCR scanning functionality.
+   * **Display over other apps**: Required for overlay rendering.
+   * **Accessibility Service**: Enable `android-control-core` under *Settings > Accessibility*.
 
-   * **Display over other apps** (required for overlay rendering)
-   * **Accessibility Service**
-     Enable `android-control-core` under *Settings > Accessibility*
-   * **Notification Permission**
-     Required for testing remote notification commands
+3. **Model Setup (OCR)**
+   * The project uses **PaddleOCR** via NCNN.
+   * Ensure the model assets (`.bin`, `.param` files) are correctly placed in `src/main/assets` if not already bundled.
+   * The app will automatically initialize the OCR engine on first launch.
 
-3. **Start the System**
-
+4. **Start the System**
    * Launch the app and tap **“Start Service”**
-   * Note the **IP Address** and **Passkey** shown on the screen
-     Example: `ws://192.168.1.X:8887`
+   * Go to the **OCR** tab to test the camera and text recognition.
 
 ---
 
-### Web Client (Controller Side)
+## 🧠 Technical Architecture & Challenges
 
-1. **Open Web Interface**
+### **Models Used**
+* **Inference Engine**: [ncnn-paddleocr](https://github.com/FeiGeChuanShu/ncnn_paddleocr) (Optimized for Android/ARM).
+* **Model version**: **PP-OCRv4 Mobile / Slim** (Lightweight model for mobile devices).
+    * Includes Text Detection (DBNet) + Text Recognition (SVTR_LCNet).
+* **References & Documentation**:
+    * [PaddlePaddle/PaddleOCR Repository](https://github.com/PaddlePaddle/PaddleOCR?tab=readme-ov-file)
+    * [ncnn_paddleocr Repository (Implementation Base)](https://github.com/FeiGeChuanShu/ncnn_paddleocr)
+    * [PaddleOCR Android Demo Guide](https://www.paddleocr.ai/main/en/version2.x/legacy/android_demo.html#33-running-the-demo)
+    * [Paddle Lite Library Preparation](https://www.paddleocr.ai/main/en/version2.x/legacy/lite.html#12-prepare-paddle-lite-library)
 
-   * Open `web_client/index.html` in any modern browser
-     (Chrome, Edge, Safari — must be on the same LAN)
+### **Problem Solving & Techniques**
 
-2. **Connect**
+#### **1. Camera Black Screen (Camera2 API + Compose)**
+* **Problem**: The camera preview was rendering a black screen when integrated into the Jetpack Compose UI.
+* **Cause**: `AndroidView` factory only runs once. If the camera permission or controller wasn't ready during the initial composition, the `openCamera` command was never called.
+* **Solution**: Moved the `openCamera` logic into the `update` block of `AndroidView`. This ensures that whenever the `cameraController` becomes available or state changes, the camera stream is correctly re-attached to the `TextureView`.
 
-   * WebSocket URL: `ws://<ANDROID_IP>:8887`
-   * Passkey: Use the value displayed on the Android app
-   * Click **Connect**
-
-3. **Send Test Commands**
-
-   * **Ping**: Measure latency
-   * **Notification**: Trigger a notification on the Android device (background test)
-
----
-
-## 🧪 Testing Guide
-
-### Control & Command System (JSON)
-
-1. Start the Android app and launch the service.
-2. Connect using the web client.
-3. **Heartbeat Check**
-
-   * Observe logs on the web UI.
-   * You should see:
-     `💓 Heartbeat Status Changed`
-4. **Background Test**
-
-   * Press the Home button on the Android device.
-   * Heartbeat logs should show:
-
-     ```json
-     "is_background": true
-     ```
-5. **Command Validation**
-
-   * Click **Test Notification** on the web UI.
-   * Confirm that a notification appears on the Android device.
-
-✅ Confirms full two-way communication and background execution.
+#### **2. Lifecycle Management**
+* **Technique**: Implemented `DisposableEffect` to strictly manage Camera2 resources. The camera is released immediately when the user navigates away from the OCR screen or puts the app in the background, preventing resource locks that would crash other apps.
 
 ---
 
-## 🏗️ System Diagram (Detailed)
+## 🏗️ System Diagram (Updated)
 
 ```mermaid
-graph LR
-    User("👤 Web Client / Controller")
-
+graph TD
     subgraph Android_Device ["📱 Android Device"]
         direction TB
 
-        SystemBoot("⚡ System Boot")
-
-        subgraph App_System ["⚙️ android-control-core"]
-            Boot["BootReceiver<br/>(Auto-Start)"]
-            WS["WebSocket Server<br/>(Port 8887)"]
-            Service["Foreground Service<br/>(RelayService)"]
-
-            subgraph Features ["Core Features"]
-                Heartbeat["Heartbeat Runner"]
-                ScreenMgr["ScreenCaptureManager"]
-                OverlayMgr["OverlayManager"]
-                Log["LogRepository"]
-            end
+        subgraph Core_Services ["⚙️ Core System Services"]
+            ResourceMon["Performance & Resource Monitor"]
+            PermCtrl["Permission Controller"]
+            Security["Security & Validation"]
+            Service["Foreground / Background Service"]
         end
 
-        subgraph Android_API ["🤖 Android System APIs"]
-            OverlayAPI["System Alert Window"]
-            AccessAPI["Accessibility Service"]
-            MediaAPI["MediaProjection API"]
-            NotiAPI["Notification Manager"]
+        subgraph AI_Layer ["🧠 AI Processing Layer"]
+            OCR["OCR Engine (PaddleOCR / NCNN)"]
+            CV["Computer Vision"]
+            LLM["LLM / Reasoning"]
         end
 
-        SystemBoot --> Boot -->|"Start Service"| Service
+        subgraph Control_Layer ["🎮 Control & Runtime Layer"]
+            Bus["Structured System Bus<br/>(Event / Command / Telemetry)"]
+            Orchestrator["Task Orchestrator"]
+            StateMgr["State & Lifecycle Manager"]
+            LogExport["System Log & Export"]
+        end
 
-        WS <-->|"JSON Protocol"| Service
-        Service --> Heartbeat
-        Heartbeat --> WS
+        subgraph Media_UI ["🖼️ Media & UI Layer"]
+            CamPreview["Camera Preview"]
+            Projection["Screen / Media Projection"]
+            Overlay["Overlay / Floating Window"]
+        end
 
-        Service --> OverlayMgr
-        Service --> Log
-        Service --> NotiAPI
+        %% Connections
+        ResourceMon --> Bus
+        PermCtrl --> Bus
+        Security --> Bus
+        
+        Service --> StateMgr
+        Service --> Media_UI
+        
+        Bus <--> Orchestrator
+        Orchestrator <--> StateMgr
+        Bus --> LogExport
+        
+        AI_Layer <--> Bus
+        Media_UI --> AI_Layer
 
-        OverlayMgr --> OverlayAPI
-        ScreenMgr -.-> MediaAPI
-        Service --> AccessAPI
     end
 
-    User <==>|"WebSocket (JSON)"| WS
+    subgraph External ["🌐 External World"]
+        WebClient["👤 Web / Controller"]
+        WebSocketAPI["🔌 WebSocket API (JSON Protocol)"]
+    end
+
+    WebClient <--> WebSocketAPI
+    WebSocketAPI <--> Bus
 ```
 
 ---
@@ -177,7 +178,6 @@ graph LR
 
 * **Architecture**: MVVM with a service-centric execution model.
 * **Networking**:
-
   * Mobile server: `org.java_websocket` (Port 8887)
   * Web client: Browser WebSocket API
 * **Security**: Passkey-based authentication before command execution.
@@ -188,26 +188,26 @@ graph LR
 ## ✅ Completed Tasks
 
 * [x] **Project Setup**
-
   * Android project with MVVM / Compose support
 * [x] **Network Core**
-
   * WebSocket server (`RelayServer`) on port 8887
   * Custom JSON protocol design
 * [x] **Web Client**
-
   * Controller dashboard (`index.html`)
   * Auto-reconnect, authentication, and log viewer
+* [x] **OCR Integration (New)**
+  * Camera2 API implementation in Compose
+  * PaddleOCR (NCNN) linkage
+  * JSON Result export
 * [x] **Control System**
-
   * Heartbeat status reporting
   * Remote notification execution
   * Background execution support
 * [x] **Logging System**
-
   * JSON log export (local time)
   * Reliable logging (no data loss)
   * Centralized `LogRepository` for auditing
+
 
 ---
 
