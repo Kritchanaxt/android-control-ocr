@@ -200,8 +200,8 @@ class Camera2Controller(
         }
     }
     
-    // Logic from OutputSettingsDialogFragment.kt
-    private fun getResolutionsForAspectRatio(aspectRatio: UiAspectRatio): List<ResolutionItem> {
+    // Logic from OutputSettingsDialogFragment
+    fun getResolutionsForAspectRatio(aspectRatio: UiAspectRatio): List<ResolutionItem> {
         if (characteristics == null) return emptyList()
 
         val resolutionItems = mutableListOf<ResolutionItem>()
@@ -245,6 +245,9 @@ class Camera2Controller(
                     val width = parts[0].toInt()
                     val height = parts[1].toInt()
                     val candidateSize = Size(width, height)
+
+                    // Filter < 720x720
+                    if (candidateSize.width < 720 || candidateSize.height < 720) return@forEach
 
                     val isSupported = if (aspectRatio.isPortraitDefault) {
                         candidateSize.width <= maxFinalW && candidateSize.height <= maxFinalH

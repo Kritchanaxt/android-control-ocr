@@ -217,27 +217,31 @@ fun CameraPreviewScreen(
     }
     var selectedCameraId by remember { mutableStateOf(availableCameras.firstOrNull() ?: "0") }
     
+    // Aspect Ratio State
+    var selectedAspectRatio by remember { mutableStateOf(UiAspectRatio.RATIO_3_4) } // Default to Portrait 3:4
+    
     var availableResolutions by remember { mutableStateOf<List<Size>>(emptyList()) }
     var selectedResolution by remember { mutableStateOf<Size?>(null) }
     
     var showSettingsDialog by remember { mutableStateOf(false) }
     var isCapturing by remember { mutableStateOf(false) }
 
-    // Update resolutions when camera changes
-    LaunchedEffect(selectedCameraId) {
+    // Update resolutions when camera or aspect ratio changes
+    LaunchedEffect(selectedCameraId, selectedAspectRatio) {
         if (cameraController == null) {
              cameraController = Camera2Controller(context, onImageCaptured)
         }
-        availableResolutions = cameraController!!.getCameraResolutions(selectedCameraId)
-        // Default to highest resolution or a reasonable one
-        if (selectedResolution == null && availableResolutions.isNotEmpty()) {
+        val items = cameraController!!.getResolutionsForAspectRatio(selectedAspectRatio)
+        availableResolutions = items.mapNotNull { it.size }
+        // Default to highest resolution in the list
+        if (selectedResolution == null || !availableResolutions.contains(selectedResolution)) {
             selectedResolution = availableResolutions.maxByOrNull { it.width * it.height }
         }
+        
+        cameraController?.aspectRatio = selectedAspectRatio
     }
     
-    // Re-initialize camera when settings change
-    // Using a key to force recreation of the camera session
-    val cameraKey = "$selectedCameraId-${selectedResolution?.width}x${selectedResolution?.height}"
+    val cameraKey = "$selectedCameraId-${selectedResolution?.width}x${selectedResolution?.height}-${selectedAspectRatio.name}"
 
     DisposableEffect(Unit) {
         onDispose {
@@ -297,7 +301,6 @@ fun CameraPreviewScreen(
                                 if (!isCapturing && cameraController != null) {
                                     isCapturing = true
                                     cameraController!!.takePhoto()
-                                    // Reset capturing state after delay or callback in real logic
                                     // For now, simulate delay
                                     java.util.concurrent.Executors.newSingleThreadScheduledExecutor().schedule({
                                         isCapturing = false
@@ -315,72 +318,55 @@ fun CameraPreviewScreen(
             }
         }
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize()) {
-            // TextureView for Camera2
-            AndroidView(
-                factory = { ctx ->
-                    TextureView(ctx).apply {
-                        // Keep reference? Controller needs it.
-                    }
-                },
-                modifier = Modifier.fillMaxSize(),
-                update = { textureView ->
-                    // Initialize camera when view is ready
-                    if (cameraController != null) {
-                        // Avoid re-opening if already open with same settings
-                        // For simplicity in this demo, we might just call open
-                        // But ideally we check state. 
-                        // Let's assume openCamera handles idempotency or we control via LaunchedEffect keys
-                    }
-                }
-            )
-            // We need a way to pass the TextureView to the controller.
-            // A common pattern is using a SideEffect or knowing the view is created.
+        Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
             
-            // Better approach for Compose + AndroidView + Controller:
-            AndroidView(
-                factory = { ctx ->
-                    TextureView(ctx).apply {
-                        // Keep reference? Controller needs it.
-                        // We will pass it via LaunchedEffect below
-                    }
-                },
-                update = { tv ->
-                    // Make sure we pass the view to the controller whenever it changes
-                    // or when the controller becomes available.
-                    if (cameraController != null) {
-                        try {
-                           cameraController?.openCamera(tv, selectedCameraId, selectedResolution)
-                        } catch (e: Exception) {
-                            Log.e("OCRScreen", "Error opening camera in update", e)
+            // Container for Preview + Overlay that respects Aspect Ratio
+            val ratioVal = selectedAspectRatio.value
+            
+            Box(
+                 // If FULL (null), use fillMaxSize, else use aspectRatio
+                modifier = if (ratioVal != null) Modifier.aspectRatio(ratioVal) else Modifier.fillMaxSize()
+            ) {
+                // TextureView for Camera2
+                AndroidView(
+                    factory = { ctx ->
+                        TextureView(ctx).apply {
+                            // Keep reference? Controller needs it.
+                        }
+                    },
+                    modifier = Modifier.fillMaxSize(), // Fill the AspectRatio Box
+                    update = { tv ->
+                         if (cameraController != null) {
+                            try {
+                               // Make sure we pass the correct ratio/resolution
+                               cameraController?.aspectRatio = selectedAspectRatio
+                               cameraController?.openCamera(tv, selectedCameraId, selectedResolution)
+                            } catch (e: Exception) {
+                                Log.e("OCRScreen", "Error opening camera in update", e)
+                            }
                         }
                     }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-            
-            // Re-open camera if settings change
-            LaunchedEffect(selectedCameraId, selectedResolution) {
-                // This is tricky with AndroidView reuse.
-                // In a production app, we'd manage the TextureView instance or Surface more carefully.
-                // For now, let's assume the user doesn't switch wildly.
-            }
+                )
 
-            // Overlay
-            Box(modifier = Modifier.fillMaxSize().padding(padding)) {
-                 Canvas(modifier = Modifier.fillMaxSize()) {
-                     // Draw Frame (Same logic as before)
-                      val frameColor = android.graphics.Color.WHITE
-                    val maskColor = android.graphics.Color.parseColor("#99000000")
+                // Overlay - Drawn inside the aspect ratio box
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    // Draw Frame (Same logic as before)
+                    val frameColor = android.graphics.Color.WHITE
+                    val maskColor = android.graphics.Color.parseColor("#99000000") // Semi-transparent black
                     val cornerSize = 60f
                     val strokeW = 8f
                     val frameW = size.width * 0.85f
-                    val frameH = size.height * 0.5f 
+                    val frameH = size.height * 0.85f  // Adjusted for crop focus inside ratio
+                    
+                    // If square, maybe frame is square? 
+                    // Let's keep existing logic but fit within this box.
+                    
                     val left = (size.width - frameW) / 2
                     val top = (size.height - frameH) / 2
                     val right = left + frameW
                     val bottom = top + frameH
 
+                    // Draw Mask (Darken outside frame)
                     drawRect(Color(maskColor), size = androidx.compose.ui.geometry.Size(size.width, top))
                     drawRect(Color(maskColor), topLeft = androidx.compose.ui.geometry.Offset(0f, bottom), size = androidx.compose.ui.geometry.Size(size.width, size.height - bottom))
                     drawRect(Color(maskColor), topLeft = androidx.compose.ui.geometry.Offset(0f, top), size = androidx.compose.ui.geometry.Size(left, frameH))
@@ -402,36 +388,179 @@ fun CameraPreviewScreen(
     }
     
     if (showSettingsDialog) {
-        ModalBottomSheet(onDismissRequest = { showSettingsDialog = false }) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Camera Settings", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(16.dp))
-                
-                Text("Select Camera", style = MaterialTheme.typography.titleMedium)
-                availableCameras.forEach { id ->
-                    Row(
-                        Modifier.fillMaxWidth().clickable { selectedCameraId = id }.padding(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(selected = (id == selectedCameraId), onClick = { selectedCameraId = id })
-                        Text("Camera ID: $id")
-                    }
+        ModalBottomSheet(
+            onDismissRequest = { showSettingsDialog = false },
+            containerColor = MaterialTheme.colorScheme.surface,
+            tonalElevation = 8.dp
+        ) {
+            Column(
+                Modifier
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .verticalScroll(rememberScrollState())
+                    .fillMaxWidth()
+            ) {
+                // Header
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(bottom = 16.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Settings,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text(
+                        "Camera Settings",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
                 }
-                
-                HorizontalDivider(Modifier.padding(vertical = 8.dp))
-                
-                Text("Resolution (JPEG)", style = MaterialTheme.typography.titleMedium)
-                LazyColumn(Modifier.height(200.dp)) {
-                    items(availableResolutions) { size ->
-                         Row(
-                            Modifier.fillMaxWidth().clickable { selectedResolution = size }.padding(8.dp),
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Camera Selection Section
+                Text(
+                    "Select Camera",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    availableCameras.forEachIndexed { index, id ->
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { selectedCameraId = id }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            RadioButton(selected = (size == selectedResolution), onClick = { selectedResolution = size })
-                            Text("${size.width} x ${size.height}")
+                            RadioButton(
+                                selected = (id == selectedCameraId),
+                                onClick = { selectedCameraId = id }
+                            )
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = if (id == "0") "Back Camera" else if (id == "1") "Front Camera" else "Camera ID: $id",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "ID: $id",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        if (index < availableCameras.lastIndex) {
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 52.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            )
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Aspect Ratio Selection
+                Text(
+                    "Aspect Ratio",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                val supportedRatios = listOf(UiAspectRatio.RATIO_3_4, UiAspectRatio.RATIO_9_16, UiAspectRatio.RATIO_1_1)
+                
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    supportedRatios.forEach { ratio ->
+                        FilterChip(
+                            selected = (ratio == selectedAspectRatio),
+                            onClick = { selectedAspectRatio = ratio },
+                            label = { 
+                                Text(
+                                    ratio.displayName, 
+                                    style = MaterialTheme.typography.labelLarge,
+                                    modifier = Modifier.padding(vertical = 4.dp)
+                                ) 
+                            },
+                            leadingIcon = if (ratio == selectedAspectRatio) {
+                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            } else null,
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                // Resolution Selection
+                Text(
+                    "Resolution (JPEG)",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 250.dp) // Limit height
+                ) {
+                    LazyColumn(
+                        modifier = Modifier.heightIn(max = 250.dp)
+                    ) {
+                        items(availableResolutions) { size ->
+                             Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clickable { selectedResolution = size }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                RadioButton(
+                                    selected = (size == selectedResolution),
+                                    onClick = { selectedResolution = size }
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Column {
+                                     Text(
+                                        "${size.width} x ${size.height}",
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                    val mp = String.format(Locale.US, "%.1f MP", (size.width * size.height) / 1_000_000f)
+                                     Text(
+                                        mp,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            HorizontalDivider(
+                                modifier = Modifier.padding(start = 52.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            )
+                        }
+                    }
+                }
+                
+                Spacer(modifier = Modifier.height(32.dp))
             }
         }
     }
@@ -830,6 +959,7 @@ private fun generateOCRPayload(
             val stream = java.io.ByteArrayOutputStream()
             image.compress(Bitmap.CompressFormat.JPEG, 80, stream)
             val sizeBytes = stream.size()
+            val sizeMb = sizeBytes / (1024.0 * 1024.0)
 
             val dimensions = JSONObject()
             dimensions.put("width", image.width)
@@ -840,7 +970,8 @@ private fun generateOCRPayload(
             ocrData.put("processing_time", timeMs)
             ocrData.put("text_object_count", jsonArr.length())
             ocrData.put("file_extension", "jpg")
-            ocrData.put("file_size", sizeBytes)
+            ocrData.put("file_size_bytes", sizeBytes)
+            ocrData.put("file_size_mb", String.format(java.util.Locale.US, "%.2f MB", sizeMb))
             ocrData.put("dimensions", dimensions)
 
             val textLines = JSONObject()
