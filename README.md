@@ -1,5 +1,5 @@
 
-# android-control-core-ncnn-paddleocr
+# android-control-ocr
 
 **(Layer 1: Core System / Infrastructure + Layer 2: AI & OCR Capabilities)**
 
