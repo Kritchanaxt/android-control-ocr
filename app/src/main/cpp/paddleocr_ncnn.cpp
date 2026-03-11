@@ -26,11 +26,17 @@
 #include "net.h"
 #include "benchmark.h"
 #include "common.h"
+#include <onnxruntime_cxx_api.h>
+
 static ncnn::UnlockedPoolAllocator g_blob_pool_allocator;
 static ncnn::PoolAllocator g_workspace_pool_allocator;
-const int dstHeight = 48;//when use PP-OCRv3/v4 it should be 48
+const int dstHeight = 48; // PP-OCRv5 typically uses height 48.
 ncnn::Net dbNet;
-ncnn::Net crnnNet;
+
+// ONNX Runtime global structures
+std::unique_ptr<Ort::Env> ort_env;
+std::unique_ptr<Ort::Session> rec_session;
+std::vector<char> rec_model_buffer;
 
 std::vector<std::string> keys;
 char *readKeysFromAssets(AAssetManager *mgr)
@@ -101,8 +107,8 @@ std::vector<TextBox> getTextBoxes(const cv::Mat & src, float boxScoreThresh, flo
     int width = src.cols;
     int height = src.rows;
 
-    // เลือกใช้ target_size ที่หารด้วย 32 ลงตัวเสมอ 
-    int target_size = 240; 
+    // เลือกใช้ target_size ที่หารด้วย 32 ลงตัวเสมอ (960: เน้น "แม่นยำสูงสุด" , 640: (ค่าที่แนะนำ) หรือ 320 - 480: เร็วมาก)
+    int target_size = 960; 
 
     // pad to multiple of 32
     int w = width;
@@ -195,68 +201,102 @@ TextLine scoreToTextLine(const std::vector<float>& outputData, int h, int w)
         }
         lastIndex = maxIndex;
     }
-    return { strRes, scores };
+
+    float score = 0.0f;
+    for (float s : scores) {
+        score += s;
+    }
+    if (!scores.empty()) {
+        score /= scores.size();
+    }
+
+    return { strRes, scores, score };
 }
 
-TextLine getTextLine(const cv::Mat & src)
-{
+TextLine getTextLine(const cv::Mat& src) {
+    TextLine textLine;
+    textLine.score = 0.0f;
+    textLine.text = "";
+
+    if (src.empty() || !rec_session) {
+        return textLine;
+    }
+
+    int dstHeight = 48;
     float scale = (float)dstHeight / (float)src.rows;
     int dstWidth = int((float)src.cols * scale);
+    
+    // Ensure width makes sense (e.g. multiple of 32 or just valid positive)
+    if (dstWidth <= 0) dstWidth = 32;
 
-    cv::Mat srcResize;
-    cv::resize(src, srcResize, cv::Size(dstWidth, dstHeight));
-    //if you use PP-OCRv3/v4 you should change PIXEL_RGB to PIXEL_RGB2BGR
-    ncnn::Mat input = ncnn::Mat::from_pixels(srcResize.data, ncnn::Mat::PIXEL_RGB2BGR,srcResize.cols, srcResize.rows);
-    const float mean_vals[3] = { 127.5, 127.5, 127.5 };
-    const float norm_vals[3] = { 1.0 / 127.5, 1.0 / 127.5, 1.0 / 127.5 };
-    input.substract_mean_normalize(mean_vals, norm_vals);
+    cv::Mat resized;
+    cv::resize(src, resized, cv::Size(dstWidth, dstHeight));
 
-    ncnn::Extractor extractor = crnnNet.create_extractor();
-    extractor.input("x", input);
+    // Prepare input tensor data (NCHW format, normalized to [-1, 1])
+    std::vector<float> input_tensor_values;
+    input_tensor_values.resize(1 * 3 * dstHeight * dstWidth);
 
-    ncnn::Mat out;
-    extractor.extract("fetch_name_0", out);
-    if (out.empty()) {
-        extractor.extract("Add.227", out);
-    }
-    if (out.empty()) {
-        extractor.extract("output", out);
-    }
-    if (out.empty()) {
-        return { "", {} };
-    }
+    float mean = 127.5f;
+    float std = 127.5f;
 
-    float* floatArray = (float*)out.data;
-    // Fallback un-packing logic to guarantee safety:
-    int total_elements = 1;
-    if (out.dims == 1) total_elements = out.w;
-    else if (out.dims == 2) total_elements = out.h * out.w;
-    else if (out.dims == 3) total_elements = out.c * out.h * out.w;
-
-    int expected_class_num = keys.size() + 2;
-    int class_num = out.w; // usually out.w is class_num and out.h is seq_len
-    int seq_len = out.h;
-
-    // Handle 3D output if needed, though typically it's 2D
-    std::vector<float> outputData(total_elements);
-    if (out.dims == 1 || out.dims == 2) {
-        std::copy(floatArray, floatArray + total_elements, outputData.begin());
-    } else if (out.dims == 3) {
-        if (out.c == 1) {
-            std::copy(floatArray, floatArray + total_elements, outputData.begin());
-        } else {
-            for (int q = 0; q < out.c; q++) {
-                const float* ptr = out.channel(q);
-                std::copy(ptr, ptr + out.w * out.h, outputData.begin() + q * out.w * out.h);
-            }
+    for (int h = 0; h < dstHeight; h++) {
+        for (int w = 0; w < dstWidth; w++) {
+            cv::Vec3b pixel = resized.at<cv::Vec3b>(h, w);
+            // OpenCV is BGR, model usually expects RGB? 
+            // Most PP-OCR NCNN implementations use RGB.
+            // Let's assume RGB.
+            
+            // Channel 0 (R)
+            input_tensor_values[0 * dstHeight * dstWidth + h * dstWidth + w] = (pixel[2] - mean) / std; 
+            // Channel 1 (G)
+            input_tensor_values[1 * dstHeight * dstWidth + h * dstWidth + w] = (pixel[1] - mean) / std;
+            // Channel 2 (B)
+            input_tensor_values[2 * dstHeight * dstWidth + h * dstWidth + w] = (pixel[0] - mean) / std;
         }
-        class_num = expected_class_num;
-        seq_len = total_elements / class_num;
     }
 
-    TextLine res = scoreToTextLine(outputData, seq_len, class_num);
-    return res;
+    // Create Input Tensor
+    std::vector<int64_t> input_shape = {1, 3, dstHeight, dstWidth};
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    
+    Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
+        memory_info, input_tensor_values.data(), input_tensor_values.size(), 
+        input_shape.data(), input_shape.size()
+    );
+
+    // Run Inference
+    const char* input_names[] = {"x"};
+    const char* output_names[] = {"fetch_name_0"}; // PP-OCRv5 output node name
+
+    std::vector<Ort::Value> output_tensors;
+    try {
+        output_tensors = rec_session->Run(Ort::RunOptions{nullptr}, input_names, &input_tensor, 1, output_names, 1);
+    } catch (const Ort::Exception& e) {
+        __android_log_print(ANDROID_LOG_ERROR, "PaddleOCR", "ORT Run failed: %s", e.what());
+        return textLine;
+    }
+
+    // Process Output
+    if (output_tensors.empty()) return textLine;
+
+    float* floatArr = output_tensors[0].GetTensorMutableData<float>();
+    auto type_info = output_tensors[0].GetTensorTypeAndShapeInfo();
+    auto output_shape = type_info.GetShape();
+
+    // output_shape is typically [1, seq_len, vocab_size]
+    if (output_shape.size() != 3) {
+         __android_log_print(ANDROID_LOG_ERROR, "PaddleOCR", "Unexpected output shape size: %zu", output_shape.size());
+         return textLine;
+    }
+
+    int seq_len = output_shape[1]; // time steps
+    int vocab_size = output_shape[2]; // classes
+
+    std::vector<float> outputData(floatArr, floatArr + seq_len * vocab_size);
+    
+    return scoreToTextLine(outputData, seq_len, vocab_size);
 }
+
 
 std::vector<TextLine> getTextLines(std::vector<cv::Mat> & partImg) {
     int size = partImg.size();
@@ -319,22 +359,14 @@ JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR
     AAssetManager* mgr = AAssetManager_fromJava(env, assetManager);
 
     dbNet.opt = opt;
-    crnnNet.opt = opt;
+    // We do NOT configure crnnNet anymore
 
-    // init param
+    // init db param and bin (NCNN DBNet)
     {
         int ret = dbNet.load_param(mgr, "pdocrv4_det.param");
         if (ret != 0)
         {
             __android_log_print(ANDROID_LOG_WARN, "PaddleocrNcnn", "load_dbNet_param failed");
-            return JNI_FALSE;
-        }
-        
-        ret = crnnNet.load_param(mgr, "pdocrv4_rec.param");
-        
-        if (ret != 0)
-        {
-            __android_log_print(ANDROID_LOG_WARN, "PaddleocrNcnn", "load_crnnNet_param failed");
             return JNI_FALSE;
         }
     }
@@ -347,16 +379,38 @@ JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR
             __android_log_print(ANDROID_LOG_WARN, "PaddleocrNcnn", "load_dbNet_model failed");
             return JNI_FALSE;
         }
-        
-        ret = crnnNet.load_model(mgr, "pdocrv4_rec.bin");
-        
-        if (ret != 0)
-        {
-            __android_log_print(ANDROID_LOG_WARN, "PaddleocrNcnn", "load_crnnNet_model failed");
-            return JNI_FALSE;
-        }
     }
     
+    // init ONNX Runtime for REC
+    if (!ort_env) {
+        // Init Ort::Env with warning log level
+        ort_env = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "PaddleOCR_REC");
+    }
+
+    // Load ONNX model into memory buffer
+    AAsset* asset_onnx = AAssetManager_open(mgr, "rec_th.onnx", AASSET_MODE_BUFFER); 
+    if (asset_onnx) {
+        off_t len = AAsset_getLength(asset_onnx);
+        rec_model_buffer.resize(len);
+        AAsset_read(asset_onnx, rec_model_buffer.data(), len);
+        AAsset_close(asset_onnx);
+
+        Ort::SessionOptions session_options;
+        session_options.SetIntraOpNumThreads(4);
+        session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+
+        try {
+            rec_session = std::make_unique<Ort::Session>(*ort_env, rec_model_buffer.data(), rec_model_buffer.size(), session_options);
+            __android_log_print(ANDROID_LOG_INFO, "PaddleOCR", "ORT Session Created Successfully");
+        } catch (const Ort::Exception& e) {
+            __android_log_print(ANDROID_LOG_ERROR, "PaddleOCR", "ORT Session creation failed: %s", e.what());
+            return JNI_FALSE;
+        }
+    } else {
+        __android_log_print(ANDROID_LOG_ERROR, "PaddleOCR", "Failed to load rec_th.onnx");
+        return JNI_FALSE;
+    }
+
     //load keys
     char *buffer = readKeysFromAssets(mgr);
     if (buffer != NULL) {

@@ -1,0 +1,24 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^python3 -c \"print\\('The problem is input is now called x instead of input'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python3 -c \"print\\('Wait, let us revert the input to just input! No, wait\\. rec\\.param has input\\. rec_th_opt\\.param has x\\. How can it be empty with fetch_name_0\\?! Could it be that fetch_name_0 is outputting an empty tensor\\? No, the log says extract fetch_name_0 FAILED! extract\\(\\) returns != 0\\. Or out\\.empty\\(\\) is true\\. Let us remove the out\\.empty\\(\\) check and see if it fails!'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python3 -c '\nimport struct\n# wait, fetch_name_0 extract actually returns what\\? 0 on success\\.\n# if extractor\\.extract\\(\"fetch_name_0\", out\\) != 0 it means it failed\\.\n'$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python3 -c \"print\\('Wait, could it be that by changing PIXEL_RGB to PIXEL_RGB, the dimension scaling failed and gave empty input\\? No, cv::resize is there\\.'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        },
+        "/^python3 -c \"print\\('The logs from before I cleared it might have been the user\\\\`s current run! But wait, they pasted empty results\\. Why do they get empty results with the NEW code, assuming it didn\\\\`t crash\\? It didn\\\\`t crash, which means `out\\.empty\\(\\)` was true, so `return \\{\\\\\"\\\\\", \\{\\}\\};` was returned! And it returned empty result gracefully! Which means `extractor\\.extract\\(\\\\\"output\\\\\", out\\)` also resulted in `out\\.empty\\(\\)` being true! Therefore ALL those extractions failed\\. The REAL issue is the input!'\\)\"$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

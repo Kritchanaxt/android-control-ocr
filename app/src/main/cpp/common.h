@@ -12,6 +12,7 @@ struct TextBox {
 struct TextLine {
     std::string text;
     std::vector<float> charScores;
+    float score;
 };
 
 struct Angle {

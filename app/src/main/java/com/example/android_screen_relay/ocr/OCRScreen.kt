@@ -831,7 +831,7 @@ fun OCRResultScreen(
                 ) {
                     Column(Modifier.padding(8.dp)) {
                          Text(
-                             text = "Model: PP-OCRv4",
+                             text = "Model: PP-OCRv5",
                              style = MaterialTheme.typography.labelSmall,
                              fontWeight = FontWeight.Bold
                          )
@@ -963,9 +963,9 @@ private fun generateOCRPayload(
     // engine_info (new format)
     val engineInfo = JSONObject().apply {
         put("engine", "paddleocr")
-        put("version", "v4")
+        put("version", "v5")
         put("runtime", "ncnn")
-        put("model", "PP-OCRv4_mobile_rec")
+        put("model", "PP-OCRv5_mobile_rec")
     }
     payload.put("engine_info", engineInfo)
     payload.put("pipeline", "on-device")

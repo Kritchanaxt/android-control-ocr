@@ -31,10 +31,25 @@ class PaddleOCR {
     private external fun detectNative(bitmap: Bitmap, use_gpu: Boolean): Array<Obj>
 
     fun detect(bitmap: Bitmap): String {
-        val result = detectNative(bitmap, false)
+        // Run detectNative on a thread with 8MB stack to prevent stack overflow
+        // in ncnn's recursive extract() for the 316-layer recognition model.
+        var result: Array<Obj>? = null
+        var error: Throwable? = null
+        val thread = Thread(null, {
+            try {
+                result = detectNative(bitmap, false)
+            } catch (e: Throwable) {
+                error = e
+            }
+        }, "OCR-Inference", 64L * 1024 * 1024)
+        thread.start()
+        thread.join()
+        error?.let { throw it }
+
+        val objs = result ?: return "[]"
         val jsonArray = JSONArray()
 
-        result.forEach { obj ->
+        objs.forEach { obj ->
             val jsonObject = JSONObject()
             jsonObject.put("x0", obj.x0)
             jsonObject.put("y0", obj.y0)
