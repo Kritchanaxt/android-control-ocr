@@ -108,7 +108,7 @@ std::vector<TextBox> getTextBoxes(const cv::Mat & src, float boxScoreThresh, flo
     int height = src.rows;
 
     // เลือกใช้ target_size ที่หารด้วย 32 ลงตัวเสมอ (960: เน้น "แม่นยำสูงสุด" , 640: (ค่าที่แนะนำ) หรือ 320 - 480: เร็วมาก)
-    int target_size = 640; 
+    int target_size = 320; 
 
     // pad to multiple of 32
     int w = width;
@@ -346,7 +346,7 @@ JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR
 {
     ncnn::Option opt;
     opt.lightmode = true;
-    opt.num_threads = 4;
+    opt.num_threads = 6;
     opt.blob_allocator = &g_blob_pool_allocator;
     opt.workspace_allocator = &g_workspace_pool_allocator;
     opt.use_packing_layout = true;
@@ -396,7 +396,7 @@ JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR
         AAsset_close(asset_onnx);
 
         Ort::SessionOptions session_options;
-        session_options.SetIntraOpNumThreads(4);
+        session_options.SetIntraOpNumThreads(6);
         session_options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
 
         try {
@@ -458,7 +458,7 @@ JNIEXPORT jboolean JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR
 
 JNIEXPORT jint JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR_getCpuThreadNum(JNIEnv* env, jobject thiz)
 {
-    return 4;
+    return 6;
 }
 
 JNIEXPORT jstring JNICALL Java_com_example_android_1screen_1relay_ocr_PaddleOCR_getCpuPowerMode(JNIEnv* env, jobject thiz)
