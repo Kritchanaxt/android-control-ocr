@@ -108,7 +108,7 @@ std::vector<TextBox> getTextBoxes(const cv::Mat & src, float boxScoreThresh, flo
     int height = src.rows;
 
     // เลือกใช้ target_size ที่หารด้วย 32 ลงตัวเสมอ (960: เน้น "แม่นยำสูงสุด" , 640: (ค่าที่แนะนำ) หรือ 320 - 480: เร็วมาก)
-    int target_size = 960; 
+    int target_size = 640; 
 
     // pad to multiple of 32
     int w = width;
